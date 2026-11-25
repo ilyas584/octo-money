@@ -1,4 +1,4 @@
-const C = 'dompetku-v1';
+const C = 'dompetku-v2';
 const ASSETS = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -16,6 +16,8 @@ self.addEventListener('activate', e => {
 // Network-first (supaya update ikut), fallback ke cache saat offline.
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  // Jangan cache/intersep request lintas-origin (harga CoinGecko harus selalu segar).
+  if (new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(
     fetch(e.request)
       .then(res => {

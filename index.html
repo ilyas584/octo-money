@@ -115,16 +115,29 @@ let toastT;function toast(m){const t=$('#toast');t.textContent=m;t.classList.add
 
 /* ====== Data ====== */
 const KEY='dompetku.v1';
-const SIGN={income:1,expense:-1,save:-1,withdraw:1,borrow:1,debt_pay:-1,lend:-1,loan_receive:1};
-const TL={income:'Pemasukan',expense:'Pengeluaran',save:'Setor tabungan',withdraw:'Tarik tabungan',borrow:'Pinjaman diterima',debt_pay:'Bayar hutang',lend:'Uang dipinjamkan',loan_receive:'Piutang diterima'};
-const TI={income:'💰',expense:'🛒',save:'🐷',withdraw:'🏧',borrow:'🤲',debt_pay:'💸',lend:'🤝',loan_receive:'✅'};
+const SIGN={income:1,expense:-1,save:-1,withdraw:1,borrow:1,debt_pay:-1,lend:-1,loan_receive:1,inv_buy:-1,inv_sell:1};
+const TL={income:'Pemasukan',expense:'Pengeluaran',save:'Setor tabungan',withdraw:'Tarik tabungan',borrow:'Pinjaman diterima',debt_pay:'Bayar hutang',lend:'Uang dipinjamkan',loan_receive:'Piutang diterima',inv_buy:'Beli aset',inv_sell:'Jual aset'};
+const TI={income:'💰',expense:'🛒',save:'🐷',withdraw:'🏧',borrow:'🤲',debt_pay:'💸',lend:'🤝',loan_receive:'✅',inv_buy:'🪙',inv_sell:'🪙'};
+function defAssets(){return [
+  {id:'btc',sym:'BTC',name:'Bitcoin',kind:'crypto',cg:'bitcoin',manual:0},
+  {id:'pippin',sym:'PIPPIN',name:'Pippin',kind:'crypto',cg:'pippin',manual:0},
+  {id:'pepe',sym:'PEPE',name:'Pepe',kind:'crypto',cg:'pepe',manual:0},
+  {id:'qnt',sym:'QNT',name:'Quant',kind:'crypto',cg:'quant-network',manual:0},
+  {id:'gold',sym:'EMAS',name:'Emas',kind:'gold',cg:'pax-gold',manual:0}];}
+const fmtQty=n=>n.toLocaleString('id-ID',{maximumFractionDigits:n>=1000?2:8});
+const fmtPrice=n=>n>=100?rp(n):'Rp'+n.toLocaleString('id-ID',{maximumSignificantDigits:4});
+// Format Indonesia: "," = desimal, "." = ribuan (kecuali jelas desimal seperti 0.5)
+function parseNum(s){s=String(s).trim().replace(/[^0-9.,]/g,'');if(!s)return 0;
+  if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');
+  else if(/^[1-9]\d{0,2}(\.\d{3})+$/.test(s))s=s.replace(/\./g,'');
+  const v=parseFloat(s);return isFinite(v)&&v>0?v:0}
 const CAT_OUT=['Makan','Transport','Belanja','Tagihan','Hiburan','Kesehatan','Pendidikan','Lainnya'];
 const CAT_IN=['Gaji','Bonus','Usaha','Hadiah','Saldo awal','Lainnya'];
 let storageOK=true;
 function load(){
-  try{const r=localStorage.getItem(KEY);if(r){const d=JSON.parse(r);return {tx:d.tx||[],goals:d.goals||[],debts:d.debts||[],lastBackup:d.lastBackup||''}}}
+  try{const r=localStorage.getItem(KEY);if(r){const d=JSON.parse(r);return {tx:d.tx||[],goals:d.goals||[],debts:d.debts||[],lastBackup:d.lastBackup||'',assets:Array.isArray(d.assets)&&d.assets.length?d.assets:defAssets()}}}
   catch(e){storageOK=false}
-  return {tx:[],goals:[],debts:[],lastBackup:''};
+  return {tx:[],goals:[],debts:[],lastBackup:'',assets:defAssets()};
 }
 let S=load();
 function save(){
@@ -132,16 +145,31 @@ function save(){
   try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('Gagal menyimpan data!')}
 }
 function calc(){
-  let cash=0;for(const t of S.tx)cash+=(SIGN[t.type]||0)*t.amount;
+  let cash=0;for(const t of S.tx)if(!t.noCash)cash+=(SIGN[t.type]||0)*t.amount;
   const goals=S.goals.map(g=>({...g,bal:S.tx.filter(t=>t.goalId===g.id).reduce((a,t)=>a+(t.type==='save'?t.amount:t.type==='withdraw'?-t.amount:0),0)}));
   const saving=goals.reduce((a,g)=>a+g.bal,0);
   const debts=S.debts.map(d=>{const paid=S.tx.filter(t=>t.debtId===d.id&&(t.type==='debt_pay'||t.type==='loan_receive')).reduce((a,t)=>a+t.amount,0);return {...d,paid,rem:Math.max(0,d.principal-paid)}});
   const hutang=debts.filter(d=>d.type==='hutang').reduce((a,d)=>a+d.rem,0);
   const piutang=debts.filter(d=>d.type==='piutang').reduce((a,d)=>a+d.rem,0);
-  return {cash,goals,saving,debts,hutang,piutang,total:cash+saving,net:cash+saving+piutang-hutang};
+  // Investasi: modal pakai harga rata-rata; nilai pakai harga pasar (jika belum ada harga, dihitung sebesar modal)
+  const assets=S.assets.map(a=>{
+    let q=0,cost=0;
+    S.tx.filter(t=>t.assetId===a.id&&(t.type==='inv_buy'||t.type==='inv_sell'))
+      .sort((x,y)=>x.date.localeCompare(y.date)||(x.ts||0)-(y.ts||0))
+      .forEach(t=>{if(t.type==='inv_buy'){q+=t.qty;cost+=t.amount}else{const sq=Math.min(t.qty,q);if(q>0)cost-=cost*(sq/q);q-=sq}});
+    if(q<1e-12){q=0;cost=0}
+    const price=priceOf(a);
+    const value=q>0?(price==null?null:q*price):0;
+    return {...a,qty:q,cost,price,value,shown:value==null?cost:value,pl:value==null?null:value-cost};
+  });
+  const inv=assets.reduce((s,a)=>s+a.shown,0),invCost=assets.reduce((s,a)=>s+a.cost,0);
+  const noPrice=assets.filter(a=>a.qty>0&&a.value==null);
+  return {cash,goals,saving,debts,hutang,piutang,assets,inv,invCost,noPrice,total:cash+saving+inv,net:cash+saving+inv+piutang-hutang};
 }
 const cmp=(a,b)=>b.date.localeCompare(a.date)||(b.ts||0)-(a.ts||0);
 function txMeta(t){
+  if(t.assetId){const a=S.assets.find(x=>x.id===t.assetId);
+    return {icon:a&&a.kind==='gold'?'🥇':'🪙',title:TL[t.type]+' · '+(a?a.sym:'(dihapus)')+' '+fmtQty(t.qty),sub:fmtDate(t.date)+(t.noCash?' · tanpa kas':'')+(t.note?' · '+t.note:'')}}
   let title;
   if(t.type==='income'||t.type==='expense')title=t.category||TL[t.type];
   else if(t.goalId){const g=S.goals.find(x=>x.id===t.goalId);title=TL[t.type]+' · '+(g?g.name:'(dihapus)')}
@@ -151,7 +179,7 @@ function txMeta(t){
 }
 function txRow(t){
   const m=txMeta(t),s=SIGN[t.type]||0;
-  return `<div class="row" onclick="openTxDetail('${t.id}')"><div class="ic">${m.icon}</div><div class="mid"><div class="t">${esc(m.title)}</div><div class="s">${esc(m.sub)}</div></div><div class="a ${s>0?'in':'out'}">${s>0?'+':'-'}${rp(t.amount).replace('-','')}</div></div>`;
+  return `<div class="row" onclick="openTxDetail('${t.id}')"><div class="ic">${m.icon}</div><div class="mid"><div class="t">${esc(m.title)}</div><div class="s">${esc(m.sub)}</div></div><div class="a ${t.noCash?'':(s>0?'in':'out')}">${t.noCash?'':(s>0?'+':'-')}${rp(t.amount).replace('-','')}</div></div>`;
 }
 function commit(msg){save();closeSheet();render();if(msg)toast(msg)}
 
@@ -161,14 +189,14 @@ function closeSheet(){const s=$('#sheet');s.classList.remove('on');s.innerHTML='
 
 /* ====== Navigation ====== */
 let V='home';
-const TITLES={home:'Dompetku',mutasi:'Mutasi',tab:'Tabungan',hutang:'Hutang & Piutang'};
-function go(v){V=v;window.scrollTo(0,0);render()}
+const TITLES={home:'Dompetku',mutasi:'Mutasi',tab:'Tabungan',inv:'Investasi',hutang:'Hutang & Piutang'};
+function go(v){V=v;window.scrollTo(0,0);render();if(v==='inv'&&Date.now()-lastTry>60000)fetchPrices()}
 function render(){
   const y=window.scrollY,c=calc();
-  const body=V==='home'?viewHome(c):V==='mutasi'?viewMutasi():V==='tab'?viewTab(c):viewHutang(c);
+  const body=V==='home'?viewHome(c):V==='mutasi'?viewMutasi():V==='tab'?viewTab(c):V==='inv'?viewInv(c):viewHutang(c);
   const nb=(k,i,l)=>`<button class="${V===k?'on':''}" onclick="go('${k}')"><span>${i}</span>${l}</button>`;
   $('#app').innerHTML=`<header><h1>${TITLES[V]}</h1><button class="ico" onclick="openSettings()" aria-label="Pengaturan">⚙️</button></header><main>${body}</main>
-  <nav><div class="in-nav">${nb('home','🏠','Beranda')}${nb('mutasi','📒','Mutasi')}${nb('tab','🐷','Tabungan')}${nb('hutang','🤝','Hutang')}</div></nav>
+  <nav><div class="in-nav">${nb('home','🏠','Beranda')}${nb('mutasi','📒','Mutasi')}${nb('tab','🐷','Tabungan')}${nb('inv','📈','Investasi')}${nb('hutang','🤝','Hutang')}</div></nav>
   ${(V==='home'||V==='mutasi')?'<button class="fab" onclick="openTx()" aria-label="Catat transaksi">+</button>':''}`;
   if(V==='mutasi')renderList();
   window.scrollTo(0,y);
@@ -194,8 +222,9 @@ function viewHome(c){
   ${!storageOK?'<div class="warn">Browser memblokir penyimpanan. Data tidak akan tersimpan. Buka lewat Chrome biasa (bukan mode samaran).</div>':''}
   ${c.cash<0?'<div class="warn">Saldo kas negatif. Kemungkinan saldo awal belum dicatat.</div>':''}
   ${stale?'<div class="warn">Data hanya ada di perangkat ini dan belum dicadangkan 14 hari terakhir. Buka ⚙️ lalu Ekspor cadangan.</div>':''}
-  <div class="card hero"><div class="lbl">Total saldo (kas + tabungan)</div><div class="big">${rp(c.total)}</div>
-    <div class="sub"><span>Kas ${rp(c.cash)}</span><span>Tabungan ${rp(c.saving)}</span></div></div>
+  ${c.noPrice.length?'<div class="warn">Harga '+c.noPrice.map(a=>esc(a.sym)).join(', ')+' belum tersedia, nilainya dihitung sebesar modal. Buka tab Investasi.</div>':''}
+  <div class="card hero"><div class="lbl">Total saldo (kas + tabungan + investasi)</div><div class="big">${rp(c.total)}</div>
+    <div class="sub"><span>Kas ${rp(c.cash)}</span><span>Tabungan ${rp(c.saving)}</span><span>Investasi ${rp(c.inv)}</span></div></div>
   <div class="grid grid3">
     <div class="mini"><div class="lbl">Hutang saya</div><div class="val out">${rp(c.hutang)}</div></div>
     <div class="mini"><div class="lbl">Piutang</div><div class="val in">${rp(c.piutang)}</div></div>
@@ -225,7 +254,7 @@ function viewMutasi(){
 }
 function renderList(){
   const l=filtered();
-  const i=l.filter(t=>SIGN[t.type]>0).reduce((a,t)=>a+t.amount,0),o=l.filter(t=>SIGN[t.type]<0).reduce((a,t)=>a+t.amount,0);
+  const i=l.filter(t=>!t.noCash&&SIGN[t.type]>0).reduce((a,t)=>a+t.amount,0),o=l.filter(t=>!t.noCash&&SIGN[t.type]<0).reduce((a,t)=>a+t.amount,0);
   $('#msum').innerHTML=`<div class="grid grid3"><div class="mini"><div class="lbl">Masuk</div><div class="val in">${rp(i)}</div></div><div class="mini"><div class="lbl">Keluar</div><div class="val out">${rp(o)}</div></div><div class="mini"><div class="lbl">Selisih</div><div class="val ${i-o<0?'out':'in'}">${rp(i-o)}</div></div></div>`;
   if(!l.length){$('#mlist').innerHTML='<div class="empty">Tidak ada transaksi</div>';return}
   let h='',last='';
@@ -269,7 +298,7 @@ function openTxDetail(id){
   const editable=t.type==='income'||t.type==='expense';
   sheet(`<h3>${m.icon} ${esc(m.title)}</h3>
   <div class="big ${s>0?'in':'out'}" style="font-size:28px;font-weight:700">${s>0?'+':'-'}${rp(t.amount).replace('-','')}</div>
-  <div style="margin-top:10px"><div class="kv"><span>Jenis</span><b>${TL[t.type]}</b></div><div class="kv"><span>Tanggal</span><b>${fmtDate(t.date)}</b></div><div class="kv"><span>Catatan</span><b>${esc(t.note||'-')}</b></div></div>
+  <div style="margin-top:10px"><div class="kv"><span>Jenis</span><b>${TL[t.type]}</b></div>${t.assetId?`<div class="kv"><span>Jumlah</span><b>${fmtQty(t.qty)}</b></div><div class="kv"><span>Harga/unit</span><b>${fmtPrice(t.amount/t.qty)}</b></div>`:''}${t.noCash?'<div class="kv"><span>Saldo kas</span><b>Tidak berubah</b></div>':''}<div class="kv"><span>Tanggal</span><b>${fmtDate(t.date)}</b></div><div class="kv"><span>Catatan</span><b>${esc(t.note||'-')}</b></div></div>
   ${editable?`<button class="btn sec2" onclick="openTx('${t.id}')">Ubah</button>`:'<p class="muted" style="margin-top:10px">Transaksi ini terhubung ke tabungan/hutang. Hapus saja jika salah catat.</p>'}
   <button class="btn danger" onclick="delTx('${t.id}')">Hapus</button>`);
 }
@@ -372,6 +401,138 @@ function delDebt(id){
   S.debts=S.debts.filter(x=>x.id!==id);S.tx=S.tx.filter(t=>t.debtId!==id);commit('Dihapus');
 }
 
+/* ====== Harga pasar (CoinGecko) ====== */
+const PKEY='dompetku.prices.v1',OZ=31.1034768;
+let PR={t:0,p:{},miss:[]};
+try{const r=JSON.parse(localStorage.getItem(PKEY));if(r&&r.p)PR=r}catch(e){}
+let prStatus='',prBusy=false,lastTry=0;
+function priceOf(a){
+  if(a.manual>0)return a.manual;
+  const p=PR.p[a.cg];if(!(p>0))return null;
+  return a.kind==='gold'?p/OZ:p;
+}
+async function fetchPrices(){
+  if(prBusy)return;
+  const ids=[...new Set(S.assets.map(a=>a.cg).filter(Boolean))];
+  if(!ids.length)return;
+  prBusy=true;lastTry=Date.now();prStatus='';
+  if(V==='inv')render();
+  try{
+    const ctl=new AbortController(),to=setTimeout(()=>ctl.abort(),12000);
+    let r;try{r=await fetch('https://api.coingecko.com/api/v3/simple/price?ids='+encodeURIComponent(ids.join(','))+'&vs_currencies=idr',{signal:ctl.signal})}finally{clearTimeout(to)}
+    if(!r.ok)throw new Error(r.status===429?'terlalu sering, coba lagi sebentar':'server membalas '+r.status);
+    const j=await r.json(),p={...PR.p},miss=[];let got=0;
+    ids.forEach(id=>{const v=j&&j[id]&&j[id].idr;if(typeof v==='number'&&v>0){p[id]=v;got++}else miss.push(id)});
+    if(!got)throw new Error('tidak ada harga diterima');
+    PR={t:Date.now(),p,miss};
+    try{localStorage.setItem(PKEY,JSON.stringify(PR))}catch(e){}
+    if(miss.length)prStatus='ID CoinGecko tidak dikenali: '+miss.join(', ')+'. Perbaiki lewat tombol Atur, atau isi harga manual.';
+  }catch(e){
+    prStatus='Gagal mengambil harga ('+(e.name==='AbortError'?'timeout':e.name==='TypeError'?'tidak ada koneksi':e.message)+'). Memakai harga terakhir yang tersimpan.';
+  }
+  prBusy=false;
+  if(V==='home'||V==='inv')render();
+}
+function manualRefresh(){if(Date.now()-lastTry<8000&&!prBusy)return toast('Tunggu beberapa detik');fetchPrices()}
+
+/* ====== Investasi ====== */
+function viewInv(c){
+  const val=c.inv,cost=c.invCost,pl=val-cost,pct=cost>0?pl/cost*100:0;
+  const u=PR.t?new Date(PR.t):null;
+  const ds=u?u.getFullYear()+'-'+pad(u.getMonth()+1)+'-'+pad(u.getDate()):'';
+  const old=PR.t&&Date.now()-PR.t>30*60000;
+  return `<div class="card hero"><div class="lbl">Nilai investasi (estimasi)</div><div class="big">${rp(val)}</div>
+  <div class="sub"><span>Modal ${rp(cost)}</span><span>${pl>=0?'Untung':'Rugi'} ${rp(Math.abs(pl))}${cost>0?' ('+(pl>=0?'+':'-')+Math.abs(pct).toFixed(1).replace('.',',')+'%)':''}</span></div></div>
+  <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div class="muted" style="margin:0">${prBusy?'Mengambil harga…':u?'Harga diperbarui '+fmtDate(ds)+' '+pad(u.getHours())+':'+pad(u.getMinutes()):'Harga belum pernah diambil'}</div><button class="sm pri" onclick="manualRefresh()">${prBusy?'…':'Perbarui'}</button></div>
+  ${prStatus?`<div class="warn">${esc(prStatus)}</div>`:''}
+  ${old&&!prStatus?'<div class="warn">Harga sudah lebih dari 30 menit. Nilai di bawah bisa tidak akurat.</div>':''}
+  ${c.noPrice.length?'<div class="warn">Harga '+c.noPrice.map(a=>esc(a.sym)).join(', ')+' belum tersedia, nilainya dihitung sebesar modal.</div>':''}
+  ${c.assets.map(a=>{
+    const unit=a.kind==='gold'?'gram':a.sym;
+    return `<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><div><b>${a.kind==='gold'?'🥇':'🪙'} ${esc(a.name)}</b> <span class="badge">${esc(a.sym)}</span></div><b>${a.value==null?'—':rp(a.value)}</b></div>
+    <div class="muted" style="margin:6px 0 0">${fmtQty(a.qty)} ${esc(unit)} · ${a.price!=null?'harga '+fmtPrice(a.price)+'/'+esc(unit)+(a.manual>0?' (manual)':''):'harga belum tersedia'}</div>
+    ${a.qty>0?`<div class="muted" style="margin:2px 0 0">Modal ${rp(a.cost)}${a.pl!=null?` · <b class="${a.pl>=0?'in':'out'}">${a.pl>=0?'+':'-'}${rp(Math.abs(a.pl))}</b>`:''}</div>`:''}
+    ${a.kind==='gold'&&a.price!=null&&!(a.manual>0)?'<div class="muted" style="margin:2px 0 0">Ini harga emas dunia (acuan), bukan harga Antam/toko. Isi harga manual lewat Atur.</div>':''}
+    <div class="acts"><button class="sm pri" onclick="openTrade('${a.id}','buy')">Beli</button><button class="sm" onclick="openTrade('${a.id}','sell')">Jual</button><span style="flex:1"></span><button class="sm" onclick="openAsset('${a.id}')">Atur</button></div></div>`}).join('')}
+  <button class="btn sec2" style="margin:0 0 12px" onclick="openAsset()">+ Tambah aset</button>
+  <p class="muted">Harga acuan pasar global dari CoinGecko, dikonversi ke Rupiah. Harga di exchange lokal (Indodax, Tokocrypto, dll.) bisa berbeda karena selisih harga dan biaya. Untung/rugi di sini belum terealisasi. Nilai investasi ikut dihitung di total saldo.</p>`;
+}
+let T={};
+function openTrade(id,side){
+  const a=calc().assets.find(x=>x.id===id);
+  T={id,side,qty:'',total:'',date:today(),cash:true,unit:a.kind==='gold'?'gram':a.sym};
+  renderTrade();
+}
+function readTradeDom(){if($('#t-qty')){T.qty=$('#t-qty').value;T.total=$('#t-tot').value;T.date=$('#t-date').value||today();T.cash=$('#t-cash').checked}}
+function renderTrade(){
+  const a=calc().assets.find(x=>x.id===T.id),buy=T.side==='buy';
+  sheet(`<h3>${buy?'Beli':'Jual'} ${esc(a.name)}</h3>
+  ${buy?'':`<p class="muted">Dimiliki: ${fmtQty(a.qty)} ${esc(T.unit)}</p>`}
+  <label>Jumlah (${esc(T.unit)})</label><input id="t-qty" inputmode="decimal" placeholder="0" value="${esc(T.qty)}" oninput="this.value=this.value.replace(/[^0-9.,]/g,'');updPrev()">
+  <label>Total ${buy?'dibayar':'diterima'} dalam Rupiah (termasuk fee)</label><input id="t-tot" class="big" inputmode="numeric" placeholder="0" value="${esc(T.total)}" oninput="fmtInput(this);updPrev()">
+  ${a.price>0?`<button class="sm" style="margin-top:8px" onclick="fillMarket()">Isi total dengan harga pasar (${fmtPrice(a.price)}/${esc(T.unit)})</button>`:''}
+  <div id="t-prev" class="muted" style="margin-top:10px"></div>
+  <label>Tanggal</label><input id="t-date" type="date" value="${T.date}">
+  <label class="chk"><input id="t-cash" type="checkbox" ${T.cash?'checked':''}> ${buy?'Dibayar dari saldo kas':'Hasilnya masuk ke saldo kas'}</label>
+  <p class="muted" style="margin-top:6px">Matikan jika aset ini sudah kamu punya sebelum memakai aplikasi, supaya saldo kas tidak berubah. Pakai koma untuk desimal (0,5) dan tulis jumlah besar tanpa titik jika ragu.</p>
+  <button class="btn" onclick="saveTrade()">Simpan</button>`);
+  updPrev();
+}
+function updPrev(){
+  const el=$('#t-prev');if(!el)return;
+  const q=parseNum($('#t-qty').value),tot=parseAmt($('#t-tot').value);
+  if(!q&&!tot){el.textContent='';el.className='muted';return}
+  let s='Terbaca: '+fmtQty(q)+' '+T.unit,bad=false;
+  if(q>0&&tot>0){
+    const pr=tot/q;s+=' · harga '+fmtPrice(pr)+'/'+T.unit;
+    const a=calc().assets.find(x=>x.id===T.id);
+    if(a&&a.price>0){const d=(pr/a.price-1)*100;if(Math.abs(d)>30){s+=' · beda '+(d>0?'+':'')+Math.round(d)+'% dari harga pasar, cek lagi';bad=true}}
+  }
+  el.textContent=s;el.className=bad?'warn':'muted';
+}
+function fillMarket(){
+  readTradeDom();const a=calc().assets.find(x=>x.id===T.id),q=parseNum(T.qty);
+  if(!q)return toast('Isi jumlah dulu');
+  T.total=Math.round(q*a.price).toLocaleString('id-ID');renderTrade();
+}
+function saveTrade(){
+  readTradeDom();const a=calc().assets.find(x=>x.id===T.id);
+  let q=parseNum(T.qty);const tot=parseAmt(T.total);
+  if(!(q>0))return toast('Isi jumlah dulu');
+  if(!tot)return toast('Isi total Rupiah dulu');
+  if(T.side==='sell'){
+    if(q>a.qty*(1+1e-9)+1e-12)return toast('Melebihi yang dimiliki ('+fmtQty(a.qty)+')');
+    if(q>a.qty)q=a.qty;
+  }
+  S.tx.push({id:uid(),type:T.side==='buy'?'inv_buy':'inv_sell',amount:tot,category:'Investasi',date:T.date,note:'',assetId:T.id,qty:q,noCash:!T.cash,ts:Date.now()});
+  commit(T.side==='buy'?'Pembelian dicatat':'Penjualan dicatat');
+}
+function openAsset(id){
+  const a=id?S.assets.find(x=>x.id===id):null,unit=a&&a.kind==='gold'?'gram':'unit';
+  sheet(`<h3>${a?'Atur '+esc(a.name):'Tambah aset'}</h3>
+  <label>Jenis</label><select id="as-kind" ${a?'disabled':''} onchange="if(this.value==='gold'&&!$('#as-cg').value)$('#as-cg').value='pax-gold'"><option value="crypto" ${!a||a.kind==='crypto'?'selected':''}>Kripto</option><option value="gold" ${a&&a.kind==='gold'?'selected':''}>Emas (per gram)</option></select>
+  <label>Simbol</label><input id="as-sym" value="${esc(a?a.sym:'')}" maxlength="10" placeholder="mis. ETH">
+  <label>Nama</label><input id="as-name" value="${esc(a?a.name:'')}" maxlength="30" placeholder="mis. Ethereum">
+  <label>ID CoinGecko</label><input id="as-cg" value="${esc(a?a.cg:'')}" autocapitalize="none" placeholder="mis. ethereum">
+  <p class="muted" style="margin-top:6px">Cari di URL coingecko.com/en/coins/<b>id-nya</b>. Emas memakai harga PAX Gold (pax-gold) per gram.</p>
+  <label>Harga manual per ${unit} (Rp, opsional)</label><input id="as-man" inputmode="decimal" value="${a&&a.manual>0?String(a.manual).replace('.',','):''}" placeholder="kosongkan untuk harga otomatis">
+  <button class="btn" onclick="saveAsset('${a?a.id:''}')">Simpan</button>
+  ${a?`<button class="btn danger" onclick="delAsset('${a.id}')">Hapus aset</button>`:''}`);
+}
+function saveAsset(id){
+  const kind=$('#as-kind').value,sym=$('#as-sym').value.trim().toUpperCase(),name=$('#as-name').value.trim(),cg=$('#as-cg').value.trim().toLowerCase(),man=parseNum($('#as-man').value);
+  if(!sym||!name)return toast('Isi simbol dan nama');
+  if(!cg&&!(man>0))return toast('Isi ID CoinGecko atau harga manual');
+  if(id){Object.assign(S.assets.find(x=>x.id===id),{sym,name,cg,manual:man})}
+  else S.assets.push({id:uid(),sym,name,kind,cg,manual:man});
+  commit('Tersimpan');fetchPrices();
+}
+function delAsset(id){
+  if(S.tx.some(t=>t.assetId===id))return toast('Hapus dulu transaksi aset ini di Mutasi');
+  if(!confirm('Hapus aset ini?'))return;
+  S.assets=S.assets.filter(x=>x.id!==id);commit('Aset dihapus');
+}
+
 /* ====== Pengaturan / cadangan ====== */
 function openSettings(){
   sheet(`<h3>Pengaturan</h3>
@@ -398,7 +559,7 @@ $('#imp').addEventListener('change',e=>{
       if(!Array.isArray(d.tx)||!Array.isArray(d.goals)||!Array.isArray(d.debts))throw 0;
       if(!d.tx.every(t=>t&&SIGN[t.type]!==undefined&&Number.isFinite(t.amount)&&/^\d{4}-\d{2}-\d{2}$/.test(t.date)))throw 0;
       if(!confirm('Ganti semua data saat ini dengan cadangan ('+d.tx.length+' transaksi)?'))return;
-      S={tx:d.tx,goals:d.goals,debts:d.debts,lastBackup:d.lastBackup||''};commit('Cadangan dipulihkan');
+      S={tx:d.tx,goals:d.goals,debts:d.debts,lastBackup:d.lastBackup||'',assets:Array.isArray(d.assets)&&d.assets.length?d.assets:defAssets()};commit('Cadangan dipulihkan');
     }catch(x){toast('File cadangan tidak valid')}
   };
   r.readAsText(f);
@@ -406,11 +567,14 @@ $('#imp').addEventListener('change',e=>{
 function resetAll(){
   if(!confirm('Hapus SEMUA data? Tidak bisa dibatalkan.'))return;
   if(!confirm('Yakin? Pastikan sudah ekspor cadangan.'))return;
-  S={tx:[],goals:[],debts:[],lastBackup:''};commit('Semua data dihapus');
+  S={tx:[],goals:[],debts:[],lastBackup:'',assets:defAssets()};commit('Semua data dihapus');
 }
 
 /* ====== Init ====== */
 render();
+fetchPrices();
+setInterval(()=>{if(!document.hidden&&Date.now()-lastTry>180000)fetchPrices()},60000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&Date.now()-lastTry>120000)fetchPrices()});
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 if('serviceWorker' in navigator&&location.protocol.indexOf('http')===0)navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
