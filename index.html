@@ -103,7 +103,9 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const pad=n=>String(n).padStart(2,'0');
-const rp=n=>(n<0?'-':'')+'Rp'+Math.abs(Math.round(n)).toLocaleString('id-ID');
+let HIDE=false;try{HIDE=localStorage.getItem('dompetku.hide')==='1'}catch(e){}
+const rpRaw=n=>(n<0?'-':'')+'Rp'+Math.abs(Math.round(n)).toLocaleString('id-ID');
+const rp=n=>HIDE?'Rp ••••':rpRaw(n);
 const today=()=>{const d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())};
 const ym=s=>s.slice(0,7);
 const MONTHS=['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
@@ -124,8 +126,9 @@ function defAssets(){return [
   {id:'pepe',sym:'PEPE',name:'Pepe',kind:'crypto',cg:'pepe',manual:0},
   {id:'qnt',sym:'QNT',name:'Quant',kind:'crypto',cg:'quant-network',manual:0},
   {id:'gold',sym:'EMAS',name:'Emas',kind:'gold',cg:'pax-gold',manual:0}];}
-const fmtQty=n=>n.toLocaleString('id-ID',{maximumFractionDigits:n>=1000?2:8});
-const fmtPrice=n=>n>=100?rp(n):'Rp'+n.toLocaleString('id-ID',{maximumSignificantDigits:4});
+const fmtQtyRaw=n=>n.toLocaleString('id-ID',{maximumFractionDigits:n>=1000?2:8});
+const fmtQty=n=>HIDE?'••••':fmtQtyRaw(n);
+const fmtPrice=n=>n>=100?rpRaw(n):'Rp'+n.toLocaleString('id-ID',{maximumSignificantDigits:4});
 // Format Indonesia: "," = desimal, "." = ribuan (kecuali jelas desimal seperti 0.5)
 function parseNum(s){s=String(s).trim().replace(/[^0-9.,]/g,'');if(!s)return 0;
   if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');
@@ -190,12 +193,13 @@ function closeSheet(){const s=$('#sheet');s.classList.remove('on');s.innerHTML='
 /* ====== Navigation ====== */
 let V='home';
 const TITLES={home:'Dompetku',mutasi:'Mutasi',tab:'Tabungan',inv:'Investasi',hutang:'Hutang & Piutang'};
+function toggleHide(){HIDE=!HIDE;try{localStorage.setItem('dompetku.hide',HIDE?'1':'0')}catch(e){}render();toast(HIDE?'Saldo disembunyikan':'Saldo ditampilkan')}
 function go(v){V=v;window.scrollTo(0,0);render();if(v==='inv'&&Date.now()-lastTry>60000)fetchPrices()}
 function render(){
   const y=window.scrollY,c=calc();
   const body=V==='home'?viewHome(c):V==='mutasi'?viewMutasi():V==='tab'?viewTab(c):V==='inv'?viewInv(c):viewHutang(c);
   const nb=(k,i,l)=>`<button class="${V===k?'on':''}" onclick="go('${k}')"><span>${i}</span>${l}</button>`;
-  $('#app').innerHTML=`<header><h1>${TITLES[V]}</h1><button class="ico" onclick="openSettings()" aria-label="Pengaturan">⚙️</button></header><main>${body}</main>
+  $('#app').innerHTML=`<header><h1>${TITLES[V]}</h1><div style="display:flex;gap:8px"><button class="ico" onclick="toggleHide()" aria-label="${HIDE?'Tampilkan saldo':'Sembunyikan saldo'}">${HIDE?'🙈':'👁️'}</button><button class="ico" onclick="openSettings()" aria-label="Pengaturan">⚙️</button></div></header><main>${body}</main>
   <nav><div class="in-nav">${nb('home','🏠','Beranda')}${nb('mutasi','📒','Mutasi')}${nb('tab','🐷','Tabungan')}${nb('inv','📈','Investasi')}${nb('hutang','🤝','Hutang')}</div></nav>
   ${(V==='home'||V==='mutasi')?'<button class="fab" onclick="openTx()" aria-label="Catat transaksi">+</button>':''}`;
   if(V==='mutasi')renderList();
@@ -298,7 +302,7 @@ function openTxDetail(id){
   const editable=t.type==='income'||t.type==='expense';
   sheet(`<h3>${m.icon} ${esc(m.title)}</h3>
   <div class="big ${s>0?'in':'out'}" style="font-size:28px;font-weight:700">${s>0?'+':'-'}${rp(t.amount).replace('-','')}</div>
-  <div style="margin-top:10px"><div class="kv"><span>Jenis</span><b>${TL[t.type]}</b></div>${t.assetId?`<div class="kv"><span>Jumlah</span><b>${fmtQty(t.qty)}</b></div><div class="kv"><span>Harga/unit</span><b>${fmtPrice(t.amount/t.qty)}</b></div>`:''}${t.noCash?'<div class="kv"><span>Saldo kas</span><b>Tidak berubah</b></div>':''}<div class="kv"><span>Tanggal</span><b>${fmtDate(t.date)}</b></div><div class="kv"><span>Catatan</span><b>${esc(t.note||'-')}</b></div></div>
+  <div style="margin-top:10px"><div class="kv"><span>Jenis</span><b>${TL[t.type]}</b></div>${t.assetId?`<div class="kv"><span>Jumlah</span><b>${fmtQtyRaw(t.qty)}</b></div><div class="kv"><span>Harga/unit</span><b>${fmtPrice(t.amount/t.qty)}</b></div>`:''}${t.noCash?'<div class="kv"><span>Saldo kas</span><b>Tidak berubah</b></div>':''}<div class="kv"><span>Tanggal</span><b>${fmtDate(t.date)}</b></div><div class="kv"><span>Catatan</span><b>${esc(t.note||'-')}</b></div></div>
   ${editable?`<button class="btn sec2" onclick="openTx('${t.id}')">Ubah</button>`:'<p class="muted" style="margin-top:10px">Transaksi ini terhubung ke tabungan/hutang. Hapus saja jika salah catat.</p>'}
   <button class="btn danger" onclick="delTx('${t.id}')">Hapus</button>`);
 }
@@ -314,7 +318,7 @@ function openAmount(o){
 function okAmount(){
   const a=parseAmt($('#a-amt').value),d=$('#a-date').value||today();
   if(!a)return toast('Isi jumlah dulu');
-  if(AM.max!=null&&a>AM.max)return toast('Maksimal '+rp(AM.max));
+  if(AM.max!=null&&a>AM.max)return toast('Maksimal '+rpRaw(AM.max));
   AM.ok(a,d);
 }
 
@@ -341,11 +345,11 @@ function goalSave(id){
 function goalWithdraw(id){
   const c=calc(),g=c.goals.find(x=>x.id===id);
   if(g.bal<=0)return toast('Saldo tabungan kosong');
-  openAmount({title:'Tarik dari '+g.name,info:'Tersedia '+rp(g.bal),max:g.bal,btn:'Tarik',ok:(a,d)=>{S.tx.push({id:uid(),type:'withdraw',amount:a,category:'Tabungan',date:d,note:'',goalId:id,ts:Date.now()});commit('Penarikan dicatat')}});
+  openAmount({title:'Tarik dari '+g.name,info:'Tersedia '+rpRaw(g.bal),max:g.bal,btn:'Tarik',ok:(a,d)=>{S.tx.push({id:uid(),type:'withdraw',amount:a,category:'Tabungan',date:d,note:'',goalId:id,ts:Date.now()});commit('Penarikan dicatat')}});
 }
 function delGoal(id){
   const g=calc().goals.find(x=>x.id===id);
-  if(g.bal>0)return toast('Tarik dulu saldo tabungan ('+rp(g.bal)+') sebelum menghapus');
+  if(g.bal>0)return toast('Tarik dulu saldo tabungan ('+rpRaw(g.bal)+') sebelum menghapus');
   if(!confirm('Hapus target "'+g.name+'"?'))return;
   S.goals=S.goals.filter(x=>x.id!==id);S.tx=S.tx.filter(t=>t.goalId!==id);commit('Target dihapus');
 }
@@ -393,7 +397,7 @@ function saveDebt(){
 }
 function payDebt(id){
   const d=calc().debts.find(x=>x.id===id),hut=d.type==='hutang';
-  openAmount({title:(hut?'Bayar hutang ke ':'Terima dari ')+d.person,info:'Sisa '+rp(d.rem),def:d.rem,max:d.rem,btn:hut?'Bayar':'Terima',ok:(a,dt)=>{S.tx.push({id:uid(),type:hut?'debt_pay':'loan_receive',amount:a,category:hut?'Bayar hutang':'Piutang',date:dt,note:'',debtId:id,ts:Date.now()});commit('Pembayaran dicatat')}});
+  openAmount({title:(hut?'Bayar hutang ke ':'Terima dari ')+d.person,info:'Sisa '+rpRaw(d.rem),def:d.rem,max:d.rem,btn:hut?'Bayar':'Terima',ok:(a,dt)=>{S.tx.push({id:uid(),type:hut?'debt_pay':'loan_receive',amount:a,category:hut?'Bayar hutang':'Piutang',date:dt,note:'',debtId:id,ts:Date.now()});commit('Pembayaran dicatat')}});
 }
 function delDebt(id){
   const d=S.debts.find(x=>x.id===id);
@@ -442,7 +446,7 @@ function viewInv(c){
   const ds=u?u.getFullYear()+'-'+pad(u.getMonth()+1)+'-'+pad(u.getDate()):'';
   const old=PR.t&&Date.now()-PR.t>30*60000;
   return `<div class="card hero"><div class="lbl">Nilai investasi (estimasi)</div><div class="big">${rp(val)}</div>
-  <div class="sub"><span>Modal ${rp(cost)}</span><span>${pl>=0?'Untung':'Rugi'} ${rp(Math.abs(pl))}${cost>0?' ('+(pl>=0?'+':'-')+Math.abs(pct).toFixed(1).replace('.',',')+'%)':''}</span></div></div>
+  <div class="sub"><span>Modal ${rp(cost)}</span><span>${pl>=0?'Untung':'Rugi'} ${rp(Math.abs(pl))}${cost>0?(HIDE?' (••%)':' ('+(pl>=0?'+':'-')+Math.abs(pct).toFixed(1).replace('.',',')+'%)'):''}</span></div></div>
   <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px"><div class="muted" style="margin:0">${prBusy?'Mengambil harga…':u?'Harga diperbarui '+fmtDate(ds)+' '+pad(u.getHours())+':'+pad(u.getMinutes()):'Harga belum pernah diambil'}</div><button class="sm pri" onclick="manualRefresh()">${prBusy?'…':'Perbarui'}</button></div>
   ${prStatus?`<div class="warn">${esc(prStatus)}</div>`:''}
   ${old&&!prStatus?'<div class="warn">Harga sudah lebih dari 30 menit. Nilai di bawah bisa tidak akurat.</div>':''}
@@ -467,7 +471,7 @@ function readTradeDom(){if($('#t-qty')){T.qty=$('#t-qty').value;T.total=$('#t-to
 function renderTrade(){
   const a=calc().assets.find(x=>x.id===T.id),buy=T.side==='buy';
   sheet(`<h3>${buy?'Beli':'Jual'} ${esc(a.name)}</h3>
-  ${buy?'':`<p class="muted">Dimiliki: ${fmtQty(a.qty)} ${esc(T.unit)}</p>`}
+  ${buy?'':`<p class="muted">Dimiliki: ${fmtQtyRaw(a.qty)} ${esc(T.unit)}</p>`}
   <label>Jumlah (${esc(T.unit)})</label><input id="t-qty" inputmode="decimal" placeholder="0" value="${esc(T.qty)}" oninput="this.value=this.value.replace(/[^0-9.,]/g,'');updPrev()">
   <label>Total ${buy?'dibayar':'diterima'} dalam Rupiah (termasuk fee)</label><input id="t-tot" class="big" inputmode="numeric" placeholder="0" value="${esc(T.total)}" oninput="fmtInput(this);updPrev()">
   ${a.price>0?`<button class="sm" style="margin-top:8px" onclick="fillMarket()">Isi total dengan harga pasar (${fmtPrice(a.price)}/${esc(T.unit)})</button>`:''}
@@ -482,7 +486,7 @@ function updPrev(){
   const el=$('#t-prev');if(!el)return;
   const q=parseNum($('#t-qty').value),tot=parseAmt($('#t-tot').value);
   if(!q&&!tot){el.textContent='';el.className='muted';return}
-  let s='Terbaca: '+fmtQty(q)+' '+T.unit,bad=false;
+  let s='Terbaca: '+fmtQtyRaw(q)+' '+T.unit,bad=false;
   if(q>0&&tot>0){
     const pr=tot/q;s+=' · harga '+fmtPrice(pr)+'/'+T.unit;
     const a=calc().assets.find(x=>x.id===T.id);
@@ -501,7 +505,7 @@ function saveTrade(){
   if(!(q>0))return toast('Isi jumlah dulu');
   if(!tot)return toast('Isi total Rupiah dulu');
   if(T.side==='sell'){
-    if(q>a.qty*(1+1e-9)+1e-12)return toast('Melebihi yang dimiliki ('+fmtQty(a.qty)+')');
+    if(q>a.qty*(1+1e-9)+1e-12)return toast('Melebihi yang dimiliki ('+fmtQtyRaw(a.qty)+')');
     if(q>a.qty)q=a.qty;
   }
   S.tx.push({id:uid(),type:T.side==='buy'?'inv_buy':'inv_sell',amount:tot,category:'Investasi',date:T.date,note:'',assetId:T.id,qty:q,noCash:!T.cash,ts:Date.now()});
